@@ -2,6 +2,10 @@
 
 Gültig ab 2026-07-09 für alle Repos dieses Accounts, die macOS-Binaries bauen.
 
+> ★ **Verwandt:** [ACTIONS-POLICY.md](ACTIONS-POLICY.md) — der Bauplan fuer
+> Release-Workflows (Runner-Faktoren, `timeout-minutes`, Job-Zuschnitt).
+> Beide Dateien entstanden aus demselben Anlass: verbrannte Actions-Minuten.
+
 ## Regel
 
 **macOS-Binaries werden nur noch für `arm64` (Apple Silicon) gebaut — keine
