@@ -103,6 +103,78 @@ Auf dem Feature-Branch beliebig committen — dort löst nichts aus. Version-Bum
 ⚠ Die Action vergleicht die Version im Code mit dem letzten Release-Tag: **ohne Bump kein
 Release.** Der Bump gehört deshalb in den *letzten* Commit des Blocks.
 
+### 7. Kein mehrzeiliges Argument in einem `run: |`-Block. Und: jede Datei durch den Parser.
+
+⚠⚠ **Der teuerste Fehler dieser Liste — nicht in Minuten, sondern in Auslieferung.**
+Ergänzt am 2026-08-29, nachdem er ein halbes Jahr unentdeckt lief.
+
+Release-Notes, Commit-Messages, JSON-Payloads: alles mit Zeilenumbrüchen **niemals** als
+mehrzeiliges Shell-Argument in einen Block-Scalar schreiben. Der Generator vom März 2026 tat
+genau das:
+
+```yaml
+        run: |
+          gh release create "v$VERSION" \
+            --notes "Automatisches Release.
+
+- **Foo.txt**: per Copy-Paste in tomedo einfügen.
+"
+```
+
+Die Notes-Zeilen stehen auf **Spalte 0**. Eine nicht-leere Zeile auf Spalte 0 **beendet den
+Block-Scalar** — der Parser sieht danach Markdown auf Top-Level, und die Datei ist ungültiges
+YAML.
+
+**Stattdessen `printf` + `--notes-file`:**
+
+```yaml
+        run: |
+          printf '%s\n' \
+            'Automatisches Release.' \
+            '' \
+            '- **Foo.txt**: per Copy-Paste in tomedo einfügen.' \
+            > notes.md
+          gh release create "v$VERSION" Foo.txt --notes-file notes.md
+```
+
+Die Anführungszeichen liegen innerhalb der Einrückung, es entsteht keine Zeile auf Spalte 0.
+In PowerShell dasselbe Problem mit dem Here-String `@" … "@`, dessen Terminator auf Spalte 0
+stehen muss — dort ein String-Array plus `[IO.File]::WriteAllLines(...)`.
+
+**Vor jedem Commit an einem Workflow:**
+
+```
+ruby -ryaml -e 'YAML.load_file(".github/workflows/release.yml")'
+```
+
+Kein Output = gültig. Zwei Sekunden.
+
+#### Die Diagnose-Signatur — daran erkennt man es im Bestand
+
+Zwei Dinge treten zusammen auf:
+
+1. Runs mit **0 s Laufzeit und `failure`**, ohne Log (`gh run view --log-failed` → „log not
+   found"), Annotation „This run likely failed because of a workflow file issue"
+2. Die Runs feuern **auch auf Feature-Branches**, obwohl `branches: [main]` dasteht
+
+★★★ Punkt 2 ist der eigentliche Verräter — und der Grund, warum es so lange lief: GitHub kann
+die `branches`/`paths`-Filter nicht anwenden, wenn es die Datei nicht parst. Man sieht rote
+Läufe auf Branches, auf denen laut Konfiguration nichts laufen dürfte, und liest das als „die
+Action ist halt zickig" statt als „die Datei ist kaputt".
+
+**Gemessen am 2026-08-25: 22 Repos betroffen, jedes seit dem 9./10. März ohne ein einziges
+Release.** Wo der Code weitergelaufen war, klaffte die Lücke entsprechend — ARD-Utils stand bei
+Release v0.1, im Code bei v1.2; ManageUsers v0.3.0 gegen v0.5.5; StandardAP v0.1 gegen v0.8.
+Kosten entstanden keine (es startet ja kein Job) — der Schaden war, dass die Auslieferung
+stillstand und niemand ein Signal bekam.
+
+#### Workflow-Dateien brauchen SSH, nicht `gh api`
+
+Dem `gh`-Token fehlt der `workflow`-Scope. Ein `PUT /repos/…/contents/.github/workflows/…`
+antwortet mit einem **404** — nicht mit „fehlende Berechtigung", sondern mit „nicht gefunden",
+obwohl ein `GET` auf denselben Pfad die Datei liefert. Über `git push` per SSH geht es. Das
+kostet sonst jedes Mal eine Viertelstunde Fehlersuche an der falschen Stelle.
+
 ---
 
 ## Der Bauplan zum Abschreiben
@@ -195,6 +267,8 @@ jobs:
 
 ## Prüfliste für eine neue oder geänderte Action
 
+- [ ] **Die Datei parst** — `ruby -ryaml -e 'YAML.load_file(".github/workflows/x.yml")'` schweigt
+- [ ] Kein mehrzeiliges Argument in einem `run: |`-Block (Notes über `printf` + `--notes-file`)
 - [ ] Jeder Job hat `timeout-minutes`
 - [ ] Kein Job auf macOS/Windows, der dort nichts Plattformspezifisches tut
 - [ ] `concurrency` gesetzt — `cancel-in-progress` **nur** in Test-Workflows
@@ -205,3 +279,12 @@ jobs:
 
 Der Bestand lässt sich jederzeit nachmessen — das Prüfskript liegt in
 `7onnie/ApiHub` unter `scripts/actions-audit.py` und meldet je Job, was fehlt.
+Es prüft `timeout-minutes` seit dem 2026-08-29 auf **jedem** Job (vorher nur auf Runnern ab
+Faktor 2 — es schwieg damit über 40 von 43 Fällen) und meldet eine nicht parsende Datei als
+`⛔ … laeuft NIE` samt Hinweis auf die Spalte-0-Ursache.
+
+⚠ Beim Einsammeln **nicht** `repos/$R/actions/workflows` benutzen: diese API führt gelöschte
+Workflows weiter als `active` (gemessen 6 statt 1 bei CDImport). Der Abruf läuft in einen 404,
+es entsteht eine leere Datei, und der Prüfer meldet dafür nichts — was sich wie „geprüft und
+sauber" liest. Die Contents-API listet, was wirklich da ist; der Aufruf im Skript-Kommentar ist
+entsprechend korrigiert.
