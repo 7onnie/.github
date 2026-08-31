@@ -138,8 +138,26 @@ YAML.
 ```
 
 Die Anführungszeichen liegen innerhalb der Einrückung, es entsteht keine Zeile auf Spalte 0.
-In PowerShell dasselbe Problem mit dem Here-String `@" … "@`, dessen Terminator auf Spalte 0
-stehen muss — dort ein String-Array plus `[IO.File]::WriteAllLines(...)`.
+
+⚠ **Maßgeblich ist die Spalte in der YAML-Datei, nicht die im Script.** Ein `run: |` ist ein
+Block-Scalar: YAML zieht die gemeinsame Einrückung ab, bevor die Shell das Script sieht. Eine
+Zeile, die in der Datei zehn Leerzeichen trägt, steht für die Shell auf Spalte 0.
+
+Daraus folgt für Here-Documents beides — und es wird leicht verwechselt:
+
+- **Eingerückt ist richtig.** Ein `<< FORMULA` in bash oder ein `@" … "@` in PowerShell
+  funktioniert innerhalb eines `run: |`-Blocks einwandfrei, obwohl beide Sprachen ihren
+  Terminator auf Spalte 0 verlangen: nach dem Dedent steht er genau dort. Der Inhalt trägt
+  dann auch keine führenden Leerzeichen. **Solche Stellen sind in Ordnung und brauchen keinen
+  Umbau** (nachgemessen 2026-08-31 an `ExtractPatID-PDF`, wo genau das faelschlich als Fehler
+  gelesen wurde).
+- **Bündig auf Spalte 0 der Datei ist tödlich.** Genau das tat der März-Generator mit seinen
+  `--notes`-Zeilen, und genau das tat `Batch-Utils` mit dem Inhalt seines `@" … "@`. Dort
+  endet der Block-Scalar, und die Datei ist kaputt.
+
+Die Prüffrage ist also nicht „steht hier ein Here-String?", sondern **„liegt eine nicht-leere
+Zeile mitten in der Datei auf Spalte 0?"**. Ist die Antwort ja: `printf`/`--notes-file`, in
+PowerShell ein String-Array plus `[IO.File]::WriteAllLines(...)`.
 
 **Vor jedem Commit an einem Workflow:**
 
